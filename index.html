@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes</title>
+<style>
+  :root {
+    --bg: #f3f5f2; --paper: #ffffff; --ink: #1d2a24; --muted: #6a7a72;
+    --line: #d8dfda; --accent: #1f6f5b; --accent-ink: #ffffff; --danger: #a63d2f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #131a17; --paper: #1b2420; --ink: #e6ede9; --muted: #8fa097;
+            --line: #2c3833; --accent: #4fb89b; --accent-ink: #0d1713; --danger: #e0806f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.55 Georgia, "Times New Roman", serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 2rem; margin: 0 0 24px; letter-spacing: -0.01em; }
+  form { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
+  input, textarea { width: 100%; font: inherit; color: inherit; background: transparent;
+         border: 0; border-bottom: 1px solid var(--line); padding: 8px 2px; outline: none; }
+  input { font-weight: bold; }
+  textarea { min-height: 110px; resize: vertical; border-bottom: 0; }
+  input:focus-visible, textarea:focus-visible { box-shadow: 0 2px 0 var(--accent); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+  button { font: 600 0.95rem system-ui, sans-serif; cursor: pointer; border-radius: 4px; }
+  .save { background: var(--accent); color: var(--accent-ink); border: 0; padding: 9px 18px; }
+  .save:disabled { opacity: .55; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .status { font: 0.85rem system-ui, sans-serif; color: var(--muted); }
+  .status.error { color: var(--danger); }
+  ul { list-style: none; padding: 0; margin: 32px 0 0; display: grid; gap: 14px; }
+  li { background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+       border-radius: 4px; padding: 14px 16px; }
+  li h2 { font-size: 1.1rem; margin: 0 0 4px; }
+  li p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px;
+          font: 0.8rem system-ui, sans-serif; color: var(--muted); }
+  .del { background: none; border: 0; color: var(--danger); padding: 2px 4px; }
+  .empty { color: var(--muted); text-align: center; padding: 32px 0; font-style: italic; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Notes</h1>
+
+  <form id="form">
+    <input id="title" placeholder="Title (optional)" maxlength="120" autocomplete="off">
+    <textarea id="body" placeholder="Write something down…" required></textarea>
+    <div class="row">
+      <span id="status" class="status" role="status"></span>
+      <button class="save" id="save" type="submit">Save note</button>
+    </div>
+  </form>
+
+  <ul id="list"></ul>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const form = $("form"), list = $("list"), status = $("status"), saveBtn = $("save");
+
+function setStatus(msg, isError = false) {
+  status.textContent = msg;
+  status.className = "status" + (isError ? " error" : "");
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+function render(notes) {
+  list.replaceChildren();
+  if (!notes.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.style.border = "0";
+    empty.style.background = "none";
+    empty.textContent = "No notes yet. Write your first one above.";
+    list.append(empty);
+    return;
+  }
+  for (const n of notes) {
+    const li = document.createElement("li");
+    if (n.title) {
+      const h = document.createElement("h2");
+      h.textContent = n.title;          // textContent prevents HTML injection
+      li.append(h);
+    }
+    const p = document.createElement("p");
+    p.textContent = n.body;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const time = document.createElement("span");
+    time.textContent = new Date(n.created_at).toLocaleString();
+    const del = document.createElement("button");
+    del.className = "del";
+    del.textContent = "Delete";
+    del.onclick = () => removeNote(n.id);
+    meta.append(time, del);
+    li.append(p, meta);
+    list.append(li);
+  }
+}
+
+async function loadNotes() {
+  try { render(await api("/api/notes")); }
+  catch (e) { setStatus(e.message, true); }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  saveBtn.disabled = true;
+  setStatus("Saving…");
+  try {
+    await api("/api/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: $("title").value, body: $("body").value }),
+    });
+    form.reset();
+    setStatus("Note saved.");
+    await loadNotes();
+  } catch (err) {
+    setStatus(err.message, true);
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
+
+async function removeNote(id) {
+  try { await api(`/api/notes/${id}`, { method: "DELETE" }); setStatus("Note deleted."); await loadNotes(); }
+  catch (e) { setStatus(e.message, true); }
+}
+
+loadNotes();
+</script>
+</body>
+</html>
